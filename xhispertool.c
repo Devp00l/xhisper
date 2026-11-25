@@ -11,6 +11,8 @@
 #include <errno.h>
 #include <stdint.h>
 #include <libgen.h>
+#include <glob.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <linux/uinput.h>
@@ -393,6 +395,38 @@ int run_daemon() {
     return 0;
 }
 
+// Returns 1 if any modifier key is physically held on any input device
+static int modifiers_held(void) {
+    static const int mods[] = {KEY_LEFTCTRL, KEY_RIGHTCTRL, KEY_LEFTALT, KEY_RIGHTALT,
+                               KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTMETA, KEY_RIGHTMETA};
+    glob_t g;
+    int held = 0;
+    if (glob("/dev/input/event*", 0, NULL, &g) != 0) return 0;
+    for (size_t i = 0; i < g.gl_pathc && !held; i++) {
+        int fd = open(g.gl_pathv[i], O_RDONLY | O_NONBLOCK);
+        if (fd < 0) continue;
+        unsigned char keys[KEY_MAX / 8 + 1] = {0};
+        if (ioctl(fd, EVIOCGKEY(sizeof(keys)), keys) >= 0) {
+            for (size_t m = 0; m < sizeof(mods) / sizeof(mods[0]); m++) {
+                if (keys[mods[m] / 8] & (1 << (mods[m] % 8))) { held = 1; break; }
+            }
+        }
+        close(fd);
+    }
+    globfree(&g);
+    return held;
+}
+
+// Wait (up to 3s) until all modifier keys are released
+static int wait_modifiers(void) {
+    struct timespec ts = {0, 20 * 1000 * 1000};
+    for (int i = 0; i < 150; i++) {
+        if (!modifiers_held()) return 0;
+        nanosleep(&ts, NULL);
+    }
+    return 1;
+}
+
 // Client mode
 void show_usage() {
     fprintf(stderr,
@@ -402,6 +436,7 @@ void show_usage() {
         "                                 (layout from XHISPER_LAYOUT: us, de, de-nodeadkeys;\n"
         "                                  de also types ä ö ü ß § ° ² ³ µ €)\n"
         "  xhispertool backspace        - Press backspace\n"
+        "  xhispertool wait-modifiers   - Wait until no modifier key is held (max 3s)\n"
         "\n"
         "Input switching keys:\n"
         "  xhispertool leftalt          - Press left alt\n"
@@ -421,6 +456,10 @@ int run_client(int argc, char *argv[]) {
     if (argc < 2) {
         show_usage();
         return 1;
+    }
+
+    if (strcmp(argv[1], "wait-modifiers") == 0) {
+        return wait_modifiers();
     }
 
     int fd = socket(AF_UNIX, SOCK_DGRAM, 0);

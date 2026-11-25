@@ -247,6 +247,10 @@ transcribe() {
 
 # Main
 
+# Wait until the hotkey's modifiers (e.g. Super+Shift) are released, otherwise
+# typed characters combine with them and trigger window manager shortcuts
+"$XHISPERTOOL" wait-modifiers
+
 # Find recording process, if so then kill
 if pgrep -f "$PROCESS_PATTERN" > /dev/null; then
   pkill -f "$PROCESS_PATTERN"; sleep 0.2 # Buffer for flush
