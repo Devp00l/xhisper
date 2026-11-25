@@ -142,6 +142,17 @@ static const int32_t ascii2keycode_map_de[128] = {
 	['^']=KEY_GRAVE|FLAG_DEAD, ['_']=S(KEY_SLASH), ['`']=S(KEY_EQUAL)|FLAG_DEAD,
 	['{']=A(KEY_7), ['|']=A(KEY_102ND), ['}']=A(KEY_0), ['~']=A(KEY_RIGHTBRACE)|FLAG_DEAD,
 };
+// Non-ASCII characters on German keys (UTF-8 in, Latin-1/private byte on the wire)
+static const struct { const char *utf8; unsigned char byte; int32_t kdef; } de_extra[] = {
+    {"ä", 0xe4, KEY_APOSTROPHE}, {"Ä", 0xc4, S(KEY_APOSTROPHE)},
+    {"ö", 0xf6, KEY_SEMICOLON},  {"Ö", 0xd6, S(KEY_SEMICOLON)},
+    {"ü", 0xfc, KEY_LEFTBRACE},  {"Ü", 0xdc, S(KEY_LEFTBRACE)},
+    {"ß", 0xdf, KEY_MINUS},      {"§", 0xa7, S(KEY_3)},
+    {"°", 0xb0, S(KEY_GRAVE)},   {"²", 0xb2, A(KEY_2)},
+    {"³", 0xb3, A(KEY_3)},       {"µ", 0xb5, A(KEY_M)},
+    {"€", 0x80, A(KEY_E)},
+};
+#define DE_EXTRA_COUNT (sizeof(de_extra) / sizeof(de_extra[0]))
 #undef S
 #undef A
 
@@ -198,10 +209,14 @@ static void modifier(uint16_t keycode, int val) {
 }
 
 void type_char(unsigned char c, char layout) {
-    if (c >= 128) return;
+    int is_de = layout == LAYOUT_DE || layout == LAYOUT_DE_NODEADKEYS;
+    int32_t kdef = -1;
 
-    int32_t kdef;
-    if (layout == LAYOUT_DE || layout == LAYOUT_DE_NODEADKEYS) {
+    if (c >= 128) {
+        if (!is_de) return;
+        for (size_t i = 0; i < DE_EXTRA_COUNT; i++)
+            if (de_extra[i].byte == c) kdef = de_extra[i].kdef;
+    } else if (is_de) {
         if (c >= 'a' && c <= 'z') c = c == 'y' ? 'z' : c == 'z' ? 'y' : c;
         if (c >= 'A' && c <= 'Z') c = c == 'Y' ? 'Z' : c == 'Z' ? 'Y' : c;
         // Letters are positional: reuse the US table (with Y/Z swapped above)
@@ -384,7 +399,8 @@ void show_usage() {
         "Usage:\n"
         "  xhispertool paste            - Paste from clipboard (Ctrl+V)\n"
         "  xhispertool type <char>      - Type a single ASCII character\n"
-        "                                 (layout from XHISPER_LAYOUT: us, de, de-nodeadkeys)\n"
+        "                                 (layout from XHISPER_LAYOUT: us, de, de-nodeadkeys;\n"
+        "                                  de also types ä ö ü ß § ° ² ³ µ €)\n"
         "  xhispertool backspace        - Press backspace\n"
         "\n"
         "Input switching keys:\n"
@@ -468,16 +484,24 @@ int run_client(int argc, char *argv[]) {
         buf[0] = 'M';
         len = 1;
     } else if (strcmp(argv[1], "type") == 0) {
-        if (argc != 3 || strlen(argv[2]) != 1) {
+        const char *layout = getenv("XHISPER_LAYOUT");
+        int is_de = layout && strncmp(layout, "de", 2) == 0;
+        unsigned char byte = 0;
+        if (argc == 3 && strlen(argv[2]) == 1) {
+            byte = (unsigned char)argv[2][0];
+        } else if (argc == 3 && is_de) {
+            for (size_t i = 0; i < DE_EXTRA_COUNT; i++)
+                if (strcmp(argv[2], de_extra[i].utf8) == 0) byte = de_extra[i].byte;
+        }
+        if (!byte) {
             fprintf(stderr, "Error: 'type' requires exactly one character argument\n");
             show_usage();
             close(fd);
             return 1;
         }
         buf[0] = 't';
-        buf[1] = argv[2][0];
+        buf[1] = (char)byte;
         len = 2;
-        const char *layout = getenv("XHISPER_LAYOUT");
         if (layout && strcmp(layout, "de") == 0) {
             buf[2] = LAYOUT_DE; len = 3;
         } else if (layout && strcmp(layout, "de-nodeadkeys") == 0) {

@@ -168,6 +168,9 @@ paste() {
     if [[ $ascii -ge 32 && $ascii -le 126 ]]; then
       # ASCII printable character - use direct key typing (faster)
       "$XHISPERTOOL" type "$char"
+    elif [[ "$XHISPER_LAYOUT" == de* && "äöüÄÖÜß§°²³µ€" == *"$char"* ]]; then
+      # Character has its own key on German layout - type directly
+      "$XHISPERTOOL" type "$char"
     else
       # Unicode or special character - use clipboard
       echo -n "$char" | $CLIP_COPY
