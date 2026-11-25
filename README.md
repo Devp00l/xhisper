@@ -143,9 +143,13 @@ The transcription will be typed at your cursor position.
 xhisper --log
 ```
 
-**Non-QWERTY layouts:**
+**German (QWERTZ) layout:**
 
-For non-QWERTY layouts (e.g. Dvorak, International), set up an input switch key to QWERTY (e.g. rightalt). Then instead of binding to `xhisper`, bind to:
+Supported natively, including `ä ö ü ß` without the clipboard. On X11 the layout is detected automatically via `setxkbmap`; otherwise set `keyboard-layout : de` (or `de-nodeadkeys`) in your config.
+
+**Other non-QWERTY layouts:**
+
+For other non-QWERTY layouts (e.g. Dvorak, International), set up an input switch key to QWERTY (e.g. rightalt). Then instead of binding to `xhisper`, bind to:
 ```sh
 xhisper --<your-input-switch-key>
 ```
