@@ -22,13 +22,21 @@
 #define KEY_RIGHTSHIFT 54
 #define KEY_LEFTMETA 125
 #define KEY_V 47
+#define KEY_102ND 86
 #define FLAG_UPPERCASE 0x80000000
+#define FLAG_ALTGR     0x40000000
+#define FLAG_DEAD      0x20000000  // dead key in layouts with dead keys: follow with space
+
+// Keyboard layouts (sent as third byte of the 't' command)
+#define LAYOUT_US            'u'
+#define LAYOUT_DE            'd'  // German QWERTZ with dead keys (^ ` ~)
+#define LAYOUT_DE_NODEADKEYS 'n'  // German QWERTZ, variant nodeadkeys
 
 // Function prototypes
 void cleanup(void);
 void emit(int type, int code, int val);
 void do_paste(void);
-void type_char(unsigned char c);
+void type_char(unsigned char c, char layout);
 void do_backspace(void);
 void do_key(int keycode);
 int setup_uinput(void);
@@ -116,6 +124,27 @@ static const int32_t ascii2keycode_map[128] = {
 	-1  // 0x7f DEL (unmapped)
 };
 
+// ASCII to Linux keycode mapping for German QWERTZ layout (xkb "de")
+// Positions follow /usr/share/X11/xkb/symbols/de. Unlisted entries are 0 = unmapped.
+#define S(k) ((k)|FLAG_UPPERCASE)
+#define A(k) ((k)|FLAG_ALTGR)
+static const int32_t ascii2keycode_map_de[128] = {
+	['\t']=KEY_TAB, ['\n']=KEY_ENTER, [' ']=KEY_SPACE,
+	['!']=S(KEY_1), ['"']=S(KEY_2), ['#']=KEY_BACKSLASH, ['$']=S(KEY_4),
+	['%']=S(KEY_5), ['&']=S(KEY_6), ['\'']=S(KEY_BACKSLASH), ['(']=S(KEY_8),
+	[')']=S(KEY_9), ['*']=S(KEY_RIGHTBRACE), ['+']=KEY_RIGHTBRACE, [',']=KEY_COMMA,
+	['-']=KEY_SLASH, ['.']=KEY_DOT, ['/']=S(KEY_7),
+	['0']=KEY_0, ['1']=KEY_1, ['2']=KEY_2, ['3']=KEY_3, ['4']=KEY_4,
+	['5']=KEY_5, ['6']=KEY_6, ['7']=KEY_7, ['8']=KEY_8, ['9']=KEY_9,
+	[':']=S(KEY_DOT), [';']=S(KEY_COMMA), ['<']=KEY_102ND, ['=']=S(KEY_0),
+	['>']=S(KEY_102ND), ['?']=S(KEY_MINUS), ['@']=A(KEY_Q),
+	['[']=A(KEY_8), ['\\']=A(KEY_MINUS), [']']=A(KEY_9),
+	['^']=KEY_GRAVE|FLAG_DEAD, ['_']=S(KEY_SLASH), ['`']=S(KEY_EQUAL)|FLAG_DEAD,
+	['{']=A(KEY_7), ['|']=A(KEY_102ND), ['}']=A(KEY_0), ['~']=A(KEY_RIGHTBRACE)|FLAG_DEAD,
+};
+#undef S
+#undef A
+
 static int fd_uinput = -1;
 static int fd_socket = -1;
 
@@ -152,20 +181,7 @@ void do_paste() {
     emit(EV_SYN, SYN_REPORT, 0);
 }
 
-void type_char(unsigned char c) {
-    if (c >= 128) return;
-
-    int32_t kdef = ascii2keycode_map[c];
-    if (kdef == -1) return;
-
-    uint16_t keycode = kdef & 0xffff;
-
-    if (kdef & FLAG_UPPERCASE) {
-        emit(EV_KEY, KEY_LEFTSHIFT, 1);
-        emit(EV_SYN, SYN_REPORT, 0);
-        usleep(2000);
-    }
-
+static void press_release(uint16_t keycode) {
     emit(EV_KEY, keycode, 1);
     emit(EV_SYN, SYN_REPORT, 0);
     usleep(8000);
@@ -173,11 +189,43 @@ void type_char(unsigned char c) {
     emit(EV_KEY, keycode, 0);
     emit(EV_SYN, SYN_REPORT, 0);
     usleep(2000);
+}
 
-    if (kdef & FLAG_UPPERCASE) {
-        emit(EV_KEY, KEY_LEFTSHIFT, 0);
-        emit(EV_SYN, SYN_REPORT, 0);
+static void modifier(uint16_t keycode, int val) {
+    emit(EV_KEY, keycode, val);
+    emit(EV_SYN, SYN_REPORT, 0);
+    if (val) usleep(2000);
+}
+
+void type_char(unsigned char c, char layout) {
+    if (c >= 128) return;
+
+    int32_t kdef;
+    if (layout == LAYOUT_DE || layout == LAYOUT_DE_NODEADKEYS) {
+        if (c >= 'a' && c <= 'z') c = c == 'y' ? 'z' : c == 'z' ? 'y' : c;
+        if (c >= 'A' && c <= 'Z') c = c == 'Y' ? 'Z' : c == 'Z' ? 'Y' : c;
+        // Letters are positional: reuse the US table (with Y/Z swapped above)
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
+            kdef = ascii2keycode_map[c];
+        else
+            kdef = ascii2keycode_map_de[c] ? ascii2keycode_map_de[c] : -1;
+    } else {
+        kdef = ascii2keycode_map[c];
     }
+    if (kdef == -1) return;
+
+    uint16_t keycode = kdef & 0xffff;
+
+    if (kdef & FLAG_UPPERCASE) modifier(KEY_LEFTSHIFT, 1);
+    if (kdef & FLAG_ALTGR) modifier(KEY_RIGHTALT, 1);
+
+    press_release(keycode);
+
+    if (kdef & FLAG_ALTGR) modifier(KEY_RIGHTALT, 0);
+    if (kdef & FLAG_UPPERCASE) modifier(KEY_LEFTSHIFT, 0);
+
+    // Dead key + space yields the plain character
+    if ((kdef & FLAG_DEAD) && layout == LAYOUT_DE) press_release(KEY_SPACE);
 }
 
 void do_backspace() {
@@ -226,6 +274,7 @@ int setup_uinput() {
     ioctl(fd_uinput, UI_SET_KEYBIT, KEY_COMMA);
     ioctl(fd_uinput, UI_SET_KEYBIT, KEY_DOT);
     ioctl(fd_uinput, UI_SET_KEYBIT, KEY_SLASH);
+    ioctl(fd_uinput, UI_SET_KEYBIT, KEY_102ND);
     ioctl(fd_uinput, UI_SET_KEYBIT, KEY_TAB);
     ioctl(fd_uinput, UI_SET_KEYBIT, KEY_ENTER);
     ioctl(fd_uinput, UI_SET_KEYBIT, KEY_BACKSPACE);
@@ -297,15 +346,15 @@ int run_daemon() {
 
     printf("xhispertoold: listening on @xhisper_socket\n");
 
-    char buf[2];
+    char buf[3];
     while (1) {
         ssize_t n = recv(fd_socket, buf, sizeof(buf), 0);
         if (n >= 1) {
             char cmd = buf[0];
             if (cmd == 'p') {
                 do_paste();
-            } else if (cmd == 't' && n == 2) {
-                type_char((unsigned char)buf[1]);
+            } else if (cmd == 't' && n >= 2) {
+                type_char((unsigned char)buf[1], n == 3 ? buf[2] : LAYOUT_US);
             } else if (cmd == 'b') {
                 do_backspace();
             } else if (cmd == 'r') {
@@ -335,6 +384,7 @@ void show_usage() {
         "Usage:\n"
         "  xhispertool paste            - Paste from clipboard (Ctrl+V)\n"
         "  xhispertool type <char>      - Type a single ASCII character\n"
+        "                                 (layout from XHISPER_LAYOUT: us, de, de-nodeadkeys)\n"
         "  xhispertool backspace        - Press backspace\n"
         "\n"
         "Input switching keys:\n"
@@ -387,7 +437,7 @@ int run_client(int argc, char *argv[]) {
         return 2;
     }
 
-    char buf[2];
+    char buf[3];
     ssize_t len = 0;
 
     if (strcmp(argv[1], "paste") == 0) {
@@ -427,6 +477,12 @@ int run_client(int argc, char *argv[]) {
         buf[0] = 't';
         buf[1] = argv[2][0];
         len = 2;
+        const char *layout = getenv("XHISPER_LAYOUT");
+        if (layout && strcmp(layout, "de") == 0) {
+            buf[2] = LAYOUT_DE; len = 3;
+        } else if (layout && strcmp(layout, "de-nodeadkeys") == 0) {
+            buf[2] = LAYOUT_DE_NODEADKEYS; len = 3;
+        }
     } else {
         fprintf(stderr, "Error: Unknown command '%s'\n", argv[1]);
         show_usage();

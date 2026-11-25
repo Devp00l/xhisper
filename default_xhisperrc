@@ -14,3 +14,7 @@ non-ascii-default-delay : 0.025
 silence-threshold  : -50
 silence-percentage : 95
 
+
+# Keyboard Layout:
+# auto (detect via setxkbmap on X11), us, de, de-nodeadkeys
+keyboard-layout : auto

@@ -11,6 +11,7 @@
 # - silence-percentage : percentage of recording that must be silent (e.g., 95)
 # - non-ascii-initial-delay : sleep after first non-ASCII paste (seconds)
 # - non-ascii-default-delay : sleep after subsequent non-ASCII pastes (seconds)
+# - keyboard-layout : auto (default), us, de, de-nodeadkeys
 
 # Requirements:
 # - pipewire, pipewire-utils (audio)
@@ -72,6 +73,7 @@ silence_threshold=-50
 silence_percentage=95
 non_ascii_initial_delay=0.1
 non_ascii_default_delay=0.025
+keyboard_layout=auto
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/xhisper/xhisperrc"
 
@@ -92,9 +94,27 @@ if [ -f "$CONFIG_FILE" ]; then
       silence-percentage) silence_percentage="$value" ;;
       non-ascii-initial-delay) non_ascii_initial_delay="$value" ;;
       non-ascii-default-delay) non_ascii_default_delay="$value" ;;
+      keyboard-layout) keyboard_layout="$value" ;;
     esac
   done < "$CONFIG_FILE"
 fi
+
+# Detect keyboard layout (X11 only via setxkbmap; otherwise falls back to us)
+if [ "$keyboard_layout" = "auto" ]; then
+  keyboard_layout=us
+  if command -v setxkbmap &> /dev/null && [ -n "$DISPLAY" ]; then
+    xkb=$(setxkbmap -query 2>/dev/null)
+    xkb_layout=$(echo "$xkb" | awk '/^layout:/ {split($2, a, ","); print a[1]}')
+    xkb_variant=$(echo "$xkb" | awk '/^variant:/ {split($2, a, ","); print a[1]}')
+    if [ "$xkb_layout" = "de" ]; then
+      case "$xkb_variant" in
+        *nodeadkeys*) keyboard_layout=de-nodeadkeys ;;
+        *) keyboard_layout=de ;;
+      esac
+    fi
+  fi
+fi
+export XHISPER_LAYOUT="$keyboard_layout"
 
 # Auto-start daemon if not running
 if ! pgrep -x xhispertoold > /dev/null; then
