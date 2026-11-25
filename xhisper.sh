@@ -123,8 +123,8 @@ if command -v wl-copy &> /dev/null; then
     CLIP_COPY="wl-copy"
     CLIP_PASTE="wl-paste"
 elif command -v xclip &> /dev/null; then
-    CLIP_COPY() { xclip -selection clipboard; }
-    CLIP_PASTE() { xclip -o -selection clipboard; }
+    CLIP_COPY="xclip -selection clipboard"
+    CLIP_PASTE="xclip -o -selection clipboard"
 else
     echo "Error: No clipboard tool found. Install wl-clipboard or xclip." >&2
     exit 1
